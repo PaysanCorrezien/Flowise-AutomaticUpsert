@@ -1,4 +1,5 @@
 ---
+doc_id: e230edc4-0619-4015-acee-dcfcde21c92a
 referent: Dylan
 titre: Activation WakeOnLan
 categorie: SYSTEM

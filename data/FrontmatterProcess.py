@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 import yaml
 import logging
+import urllib.parse
 
 
 class FrontmatterProcessor:
@@ -12,13 +13,14 @@ class FrontmatterProcessor:
         "referent": str,
         "titre": str,
         "categorie": str,
-        "date_modification": (str, datetime, date),  # Accept string or date objects
-        "date_creation": (str, datetime, date),  # Accept string or date objects
+        "date_modification": (str, datetime, date),
+        "date_creation": (str, datetime, date),
         "complexite": str,
         "version": (int, str),
         "lien": list,
         "url": str,
         "permission": str,
+        "doc_id": str,
     }
 
     @staticmethod
@@ -44,6 +46,23 @@ class FrontmatterProcessor:
             normalized = "\\\\" + normalized.lstrip("\\")
         logging.debug(f"Normalized path: {path} -> {normalized}")
         return normalized
+
+    def prepare_source_metadata(self, url: str, file_path: Path) -> Dict:
+        """Prepare source metadata in Flowise format"""
+        normalized_url = self.normalize_windows_path(url)
+        source_url = urllib.parse.quote(normalized_url, safe="/:")
+
+        return {
+            "sourceDocument": {
+                "pageContent": "",
+                "metadata": {
+                    "source": source_url,
+                    "filename": file_path.name,
+                    "filePath": self.normalize_windows_path(str(file_path.absolute())),
+                    "loc": {"lines": {"from": 1, "to": 1}},
+                },
+            }
+        }
 
     def validate_frontmatter(self, metadata: Dict) -> Dict[str, str]:
         """Validate and standardize frontmatter fields"""
@@ -81,37 +100,26 @@ class FrontmatterProcessor:
         for date_field in ["date_modification", "date_creation"]:
             if validated_metadata.get(date_field):
                 try:
-                    # Handle different date types
-                    if isinstance(validated_metadata[date_field], (datetime, date)):
-                        date_value = validated_metadata[date_field]
-                    else:
-                        date_value = datetime.strptime(
-                            validated_metadata[date_field], "%Y-%m-%d"
-                        )
-
-                    # Convert to ISO format string
-                    if isinstance(date_value, datetime):
-                        validated_metadata[date_field] = date_value.date().isoformat()
-                    else:  # date object
-                        validated_metadata[date_field] = date_value.isoformat()
-
+                    value = validated_metadata[date_field]
+                    if isinstance(value, datetime):
+                        validated_metadata[date_field] = value.date().isoformat()
+                    elif isinstance(value, date):
+                        validated_metadata[date_field] = value.isoformat()
+                    else:  # It's a string
+                        parsed_date = datetime.strptime(value, "%Y-%m-%d").date()
+                        validated_metadata[date_field] = parsed_date.isoformat()
                 except ValueError as e:
                     logging.error(f"Could not parse {date_field}: {e}")
 
-        # Handle paths
+        # Extract source from URL if present
         if validated_metadata.get("url"):
-            validated_metadata["url"] = self.normalize_windows_path(
-                validated_metadata["url"]
-            )
-
-        # Add system metadata
-        validated_metadata.update(
-            {
-                "source_file": file_path.name,
-                "file_path": self.normalize_windows_path(str(file_path.absolute())),
-                "processing_date": datetime.now().isoformat(),
+            processed_metadata = {
+                "source": validated_metadata.pop("url")  # Remove url and use as source
             }
-        )
+        else:
+            processed_metadata = {}
 
-        logging.info(f"Processed metadata for {file_path.name}")
-        return validated_metadata
+        # Add all other metadata fields directly
+        processed_metadata.update(validated_metadata)
+
+        return processed_metadata

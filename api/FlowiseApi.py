@@ -39,58 +39,40 @@ class FlowiseUpserter:
         }
 
     def upsert_document(self, file_path: Path, content: str, metadata: Dict) -> Dict:
-        """Upsert a single document to Flowise"""
         try:
+            # Use upsert endpoint for both new and existing documents
             url = f"{self.base_url}/document-store/upsert/{self.document_store_id}"
 
-            # Prepare the complete payload with all required configurations
-            payload = {
-                "loader": {"name": self.document_loader, "config": {"text": content}},
-                "splitter": {
-                    "name": self.text_splitter,
-                    "config": {
-                        "chunkSize": self.chunk_size,
-                        "chunkOverlap": self.chunk_overlap,
-                        "separators": (
-                            ["\n\n", "\n", " ", ""]
-                            if self.text_splitter == "recursiveCharacterTextSplitter"
-                            else None
-                        ),
-                    },
+            config = {
+                "loader": {"name": "plainText", "config": {"text": content}},
+                "splitter": {"name": "recursiveCharacterTextSplitter", "config": {}},
+                "embedding": {
+                    "name": "openAIEmbeddings",
+                    "config": {"openAIApiKey": os.getenv("OPENAI_API_KEY", "")},
                 },
-                "embedding": {"name": self.embedding_name, "config": {}},
-                "vectorStore": {
-                    "name": self.vector_store_name,
-                    "config": {"namespace": self.vector_store_namespace},
-                },
-                "recordManager": {"name": self.record_manager_name, "config": {}},
+                "vectorStore": {"name": "pinecone", "config": {"namespace": "default"}},
+                "recordManager": {"name": "postgresRecordManager", "config": {}},
                 "metadata": metadata,
             }
 
-            # Clean up None values from config
-            payload = self._clean_none_values(payload)
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            }
 
-            # Debug logging
-            logging.info("==== Request Details ====")
-            logging.info(f"URL: {url}")
-            logging.info(
-                f"Headers: {json.dumps({k: '' if k == 'Authorization' else v for k, v in self.headers.items()})}"
-            )
-            logging.info(
-                f"Payload: {json.dumps({k: v if k not in ['content', 'text'] else '...' for k, v in payload.items()}, indent=2)}"
-            )
-            logging.info("=====================")
+            logging.info(f"Request payload: {json.dumps(config, indent=2)}")
+            response = requests.post(url, headers=headers, json=config)
 
-            # Make the request
-            response = requests.post(url, headers=self.headers, json=payload)
+            if response.status_code != 200:
+                logging.error(f"Response content: {response.text}")
             response.raise_for_status()
 
             result = response.json()
-            logging.info(f"Successfully upserted document: {file_path.name}")
+            logging.info(f"Response result: {json.dumps(result, indent=2)}")
+
             return result
 
         except requests.RequestException as e:
-            logging.error(f"HTTP Error upserting document {file_path}: {str(e)}")
             if e.response is not None:
                 logging.error(f"Response content: {e.response.text}")
             raise
